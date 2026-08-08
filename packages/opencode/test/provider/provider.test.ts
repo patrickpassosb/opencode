@@ -109,6 +109,25 @@ const alphaProviderConfig = {
   },
 }
 
+const moaConfig = {
+  moa: {
+    default_preset: "captain-test",
+    save_traces: true,
+    presets: {
+      "captain-test": {
+        advisors: [
+          { provider: "custom", model: "ollama-cloud/glm-5.2", maxTokens: 600 },
+          { provider: "custom", model: "ollama-cloud/minimax-m3" },
+        ],
+        aggregator: { provider: "custom", model: "ollama-cloud/deepseek-v4-flash:0731", maxTokens: 4096 },
+        maxTokens: 4096,
+        referenceMaxTokens: 600,
+        fanout: "user_turn" as const,
+      },
+    },
+  },
+}
+
 it.instance("provider loaded from env variable", () =>
   Effect.gen(function* () {
     yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
@@ -308,6 +327,17 @@ it.instance("getModel returns model for valid provider/model", () =>
     const language = yield* provider.getLanguage(model)
     expect(language).toBeDefined()
   }),
+)
+
+it.instance("getLanguage returns a MoA engine for moa preset models", () =>
+  Effect.gen(function* () {
+    const provider = yield* Provider.Service
+    const model = yield* provider.getModel(ProviderV2.ID.make("moa"), ModelV2.ID.make("@moa/captain-test"))
+    const language = yield* provider.getLanguage(model)
+    expect(language.provider).toBe("moa")
+    expect(typeof (language as { moaUsage?: unknown }).moaUsage).toBe("function")
+  }),
+  { config: moaConfig },
 )
 
 it.instance("getModel throws ModelNotFoundError for invalid model", () =>
@@ -2056,4 +2086,31 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
     expect(none).toBe(0)
     expect(keyedCount).toBeGreaterThan(0)
   }).pipe(provideMultiInstance),
+)
+
+
+it.instance(
+  "synthesizes a virtual moa provider from configured presets",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const moa = providers[ProviderV2.ID.make("moa")]
+    expect(moa).toBeDefined()
+    expect(moa!.name).toBe("Mixture of Agents")
+    const model = moa!.models["@moa/captain-test"]
+    expect(model).toBeDefined()
+    expect(model!.providerID).toEqual(ProviderV2.ID.make("moa"))
+    expect(model!.api.npm).toBe("@opencode-ai/moa")
+    expect(model!.options.moaPreset).toBeDefined()
+    expect(model!.options.moaPreset.advisors).toHaveLength(2)
+    expect(model!.options.moaPreset.aggregator.model).toBe("ollama-cloud/deepseek-v4-flash:0731")
+  }),
+  { config: moaConfig },
+)
+
+it.instance(
+  "omits the moa provider when no presets are configured",
+  Effect.gen(function* () {
+    const providers = yield* list
+    expect(providers[ProviderV2.ID.make("moa")]).toBeUndefined()
+  }),
 )

@@ -10,7 +10,11 @@ import { Hash } from "@opencode-ai/core/util/hash"
 import { Plugin } from "../plugin"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { type LanguageModelV3 } from "@ai-sdk/provider"
+import { attachWith } from "@/effect/run-service"
+import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
+import type { InstanceContext } from "@/project/instance-context"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
+import { ConfigMoAV1 } from "@opencode-ai/core/v1/config/moa"
 import { Auth } from "../auth"
 import { Env } from "../env"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -18,7 +22,7 @@ import { iife } from "@/util/iife"
 import { Global } from "@opencode-ai/core/global"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Effect, Layer, Context, Schema, Types } from "effect"
+import { Effect, Fiber, Layer, Context, Option, Schema, Types } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { EffectPromise } from "@/effect/promise"
@@ -31,6 +35,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
+import { moaLanguageModel, moaTraceWriter } from "./moa"
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 300_000
 
@@ -1284,6 +1289,64 @@ export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
   }
 }
 
+export const MOA_PROVIDER_ID = "moa" as const
+export const MOA_MODEL_PREFIX = "@moa/" as const
+
+export function isMoaModel(model: Model): boolean {
+  return model.providerID === MOA_PROVIDER_ID || model.api.npm === "@opencode-ai/moa"
+}
+
+/**
+ * Build the virtual "moa" provider whose models are the configured presets.
+ * Each preset model carries its ConfigMoAV1.Preset in `options.moaPreset` and
+ * a synthetic api entry so getLanguage can route it to the MoA engine.
+ */
+export function moaProvider(presets: Record<string, ConfigMoAV1.Preset>, defaultPreset: string | undefined): Info {
+  const models: Record<string, Model> = {}
+  for (const [name, preset] of Object.entries(presets)) {
+    const id = `${MOA_MODEL_PREFIX}${name}`
+    models[id] = {
+      id: ModelV2.ID.make(id),
+      providerID: ProviderV2.ID.make(MOA_PROVIDER_ID),
+      api: { id, npm: "@opencode-ai/moa", url: "" },
+      name: `MoA ${name}`,
+      family: "moa",
+      capabilities: {
+        temperature: preset.temperature !== undefined,
+        reasoning: true,
+        attachment: false,
+        toolcall: true,
+        input: { text: true, audio: false, image: false, video: false, pdf: false },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+      limit: {
+        context: 0,
+        output: preset.maxTokens ?? 4096,
+      },
+      status: "active",
+      options: { moaPreset: preset },
+      headers: {},
+      release_date: "",
+      variants: {},
+    }
+  }
+  return {
+    id: ProviderV2.ID.make(MOA_PROVIDER_ID),
+    name: "Mixture of Agents",
+    source: "custom",
+    env: [],
+    options: { moaDefaultPreset: defaultPreset },
+    models,
+  }
+}
+
+export function moaPresetsFromConfig(config: ConfigV1.Info): { presets: Record<string, ConfigMoAV1.Preset>; defaultPreset: string | undefined } {
+  if (!config.moa || !config.moa.presets) return { presets: {}, defaultPreset: undefined }
+  return { presets: config.moa.presets, defaultPreset: config.moa.default_preset }
+}
+
 function modeOptions(model: Model, body: Record<string, unknown> | undefined) {
   if (!body) return model.options
   const options = Object.fromEntries(
@@ -1589,6 +1652,14 @@ const layer = Layer.effect(
           mergeProvider(providerID, partial)
         }
 
+        // synthesize the virtual moa provider from configured presets
+        if (cfg.moa?.presets) {
+          const { presets, defaultPreset } = moaPresetsFromConfig(cfg)
+          if (Object.keys(presets).length > 0 && isProviderAllowed(ProviderV2.ID.make(MOA_PROVIDER_ID))) {
+            providers[ProviderV2.ID.make(MOA_PROVIDER_ID)] = moaProvider(presets, defaultPreset)
+          }
+        }
+
         const gitlab = ProviderV2.ID.make("gitlab")
         if (discoveryLoaders[gitlab] && providers[gitlab] && isProviderAllowed(gitlab)) {
           yield* Effect.promise(async () => {
@@ -1832,6 +1903,36 @@ const layer = Layer.effect(
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`
       if (s.models.has(key)) return s.models.get(key)!
+
+      if (isMoaModel(model)) {
+        const preset = model.options.moaPreset as ConfigMoAV1.Preset | undefined
+        if (!preset) {
+          return yield* new ModelNotFoundError({
+            providerID: model.providerID,
+            modelID: model.id,
+            cause: new Error("moa preset is not configured"),
+          })
+        }
+        const traceDir = path.join(Global.Path.data, "moa-traces")
+        const refs: { instance?: InstanceContext; workspace?: string } = {
+          instance: Context.getReferenceUnsafe(Fiber.getCurrent()!.context, InstanceRef),
+          workspace: Context.getReferenceUnsafe(Fiber.getCurrent()!.context, WorkspaceRef),
+        }
+        const language = moaLanguageModel(preset, (providerID, modelID) =>
+          Effect.runPromise(
+            attachWith(
+              Effect.gen(function* () {
+                const sub = yield* getModel(ProviderV2.ID.make(providerID), ModelV2.ID.make(modelID))
+                return yield* getLanguage(sub)
+              }),
+              refs,
+            ),
+          ),
+        )
+        const traced = moaTraceWriter(language, traceDir, (yield* config.get()).moa?.save_traces === true)
+        s.models.set(key, traced)
+        return traced
+      }
 
       const provider = s.providers[model.providerID]
       return yield* EffectPromise.refineRejection(
