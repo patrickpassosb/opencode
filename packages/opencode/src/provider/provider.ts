@@ -10,6 +10,7 @@ import { Hash } from "@opencode-ai/core/util/hash"
 import { Plugin } from "../plugin"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { type LanguageModelV3 } from "@ai-sdk/provider"
+import { attach } from "@/effect/run-service"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { ConfigMoAV1 } from "@opencode-ai/core/v1/config/moa"
 import { Auth } from "../auth"
@@ -32,6 +33,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
+import { moaLanguageModel, moaTraceWriter } from "./moa"
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 300_000
 
@@ -1899,6 +1901,31 @@ const layer = Layer.effect(
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`
       if (s.models.has(key)) return s.models.get(key)!
+
+      if (isMoaModel(model)) {
+        const preset = model.options.moaPreset as ConfigMoAV1.Preset | undefined
+        if (!preset) {
+          return yield* new ModelNotFoundError({
+            providerID: model.providerID,
+            modelID: model.id,
+            cause: new Error("moa preset is not configured"),
+          })
+        }
+        const traceDir = path.join(Global.Path.data, "moa-traces")
+        const language = moaLanguageModel(preset, (providerID, modelID) =>
+          Effect.runPromise(
+            attach(
+              Effect.gen(function* () {
+                const sub = yield* getModel(ProviderV2.ID.make(providerID), ModelV2.ID.make(modelID))
+                return yield* getLanguage(sub)
+              }),
+            ),
+          ),
+        )
+        const traced = moaTraceWriter(language, traceDir, (yield* config.get()).moa?.save_traces === true)
+        s.models.set(key, traced)
+        return traced
+      }
 
       const provider = s.providers[model.providerID]
       return yield* EffectPromise.refineRejection(

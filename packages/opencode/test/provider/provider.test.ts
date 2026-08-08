@@ -109,6 +109,25 @@ const alphaProviderConfig = {
   },
 }
 
+const moaConfig = {
+  moa: {
+    default_preset: "captain-test",
+    save_traces: true,
+    presets: {
+      "captain-test": {
+        advisors: [
+          { provider: "custom", model: "ollama-cloud/glm-5.2", maxTokens: 600 },
+          { provider: "custom", model: "ollama-cloud/minimax-m3" },
+        ],
+        aggregator: { provider: "custom", model: "ollama-cloud/deepseek-v4-flash:0731", maxTokens: 4096 },
+        maxTokens: 4096,
+        referenceMaxTokens: 600,
+        fanout: "user_turn" as const,
+      },
+    },
+  },
+}
+
 it.instance("provider loaded from env variable", () =>
   Effect.gen(function* () {
     yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
@@ -308,6 +327,17 @@ it.instance("getModel returns model for valid provider/model", () =>
     const language = yield* provider.getLanguage(model)
     expect(language).toBeDefined()
   }),
+)
+
+it.instance("getLanguage returns a MoA engine for moa preset models", () =>
+  Effect.gen(function* () {
+    const provider = yield* Provider.Service
+    const model = yield* provider.getModel(ProviderV2.ID.make("moa"), ModelV2.ID.make("@moa/captain-test"))
+    const language = yield* provider.getLanguage(model)
+    expect(language.provider).toBe("moa")
+    expect(typeof (language as { moaUsage?: unknown }).moaUsage).toBe("function")
+  }),
+  { config: moaConfig },
 )
 
 it.instance("getModel throws ModelNotFoundError for invalid model", () =>
@@ -2058,25 +2088,6 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
   }).pipe(provideMultiInstance),
 )
 
-
-const moaConfig = {
-  moa: {
-    default_preset: "captain-test",
-    save_traces: true,
-    presets: {
-      "captain-test": {
-        advisors: [
-          { provider: "custom", model: "ollama-cloud/glm-5.2", maxTokens: 600 },
-          { provider: "custom", model: "ollama-cloud/minimax-m3" },
-        ],
-        aggregator: { provider: "custom", model: "ollama-cloud/deepseek-v4-flash:0731", maxTokens: 4096 },
-        maxTokens: 4096,
-        referenceMaxTokens: 600,
-        fanout: "user_turn" as const,
-      },
-    },
-  },
-}
 
 it.instance(
   "synthesizes a virtual moa provider from configured presets",
