@@ -391,6 +391,47 @@ Provider options can include `timeout`, `chunkTimeout`, and `setCacheKey`:
 
 You can also configure [local models](/docs/models#local). [Learn more](/docs/models).
 
+### Mixture of Agents
+
+Mixture-of-Agents (MoA) presets run a set of advisor models in parallel on every user turn and synthesize their analyses with an aggregator model. Each configured preset appears in the model picker as `moa/<preset>` and can be selected like any other model.
+
+```jsonc title="opencode.jsonc"
+{
+  "moa": {
+    "default_preset": "captain-test",
+    "save_traces": true,
+    "presets": {
+      "captain-test": {
+        "advisors": [
+          { "provider": "custom", "model": "ollama-cloud/glm-5.2", "maxTokens": 600 },
+          { "provider": "custom", "model": "ollama-cloud/minimax-m3" }
+        ],
+        "aggregator": {
+          "provider": "custom",
+          "model": "ollama-cloud/deepseek-v4-flash:0731",
+          "maxTokens": 4096
+        },
+        "maxTokens": 4096,
+        "referenceMaxTokens": 600,
+        "fanout": "user_turn"
+      }
+    }
+  }
+}
+```
+
+- `default_preset` - Preset selected when the session does not pin one explicitly.
+- `save_traces` - Write a JSON trace (per-advisor and aggregator usage) for each turn to `data/moa-traces/`.
+- `advisors` - Models consulted in parallel. Each receives the full conversation and returns a capped analysis (`maxTokens` per advisor, defaulting to `referenceMaxTokens`).
+- `aggregator` - Model that synthesizes the surviving advisor analyses into the final answer.
+- `maxTokens` - Cap for the aggregator output (default: 4096).
+- `referenceMaxTokens` - Default cap for each advisor analysis (default: 600).
+- `fanout` - When to fan out: `user_turn` (once per user turn, default) or `stream`.
+
+A failing advisor is isolated: the turn continues with the remaining advisors and only fails if all advisors fail. Usage is accounted per advisor and per aggregator and reported on the stream's finish part. The `moa` provider and its presets are only exposed when at least one preset is configured, so existing configs are unaffected.
+
+[Learn more](/docs/models#mixture-of-agents).
+
 ---
 
 ### Policies

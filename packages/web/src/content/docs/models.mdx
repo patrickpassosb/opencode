@@ -201,6 +201,45 @@ Use the keybind `variant_cycle` to quickly switch between variants. [Learn more]
 
 ---
 
+## Mixture of Agents
+
+Mixture-of-Agents (MoA) runs several advisor models in parallel on your message and has an aggregator model synthesize their analyses into the final answer. It is a first-class model type in OpenCode: configure presets in your config and pick them from the model picker like any other model.
+
+### Configure a preset
+
+```jsonc title="opencode.jsonc"
+{
+  "moa": {
+    "presets": {
+      "captain-test": {
+        "advisors": [
+          { "provider": "custom", "model": "ollama-cloud/glm-5.2" },
+          { "provider": "custom", "model": "ollama-cloud/minimax-m3" }
+        ],
+        "aggregator": {
+          "provider": "custom",
+          "model": "ollama-cloud/deepseek-v4-flash:0731"
+        }
+      }
+    }
+  }
+}
+```
+
+Each advisor receives the full conversation and returns a capped analysis (`referenceMaxTokens`, default 600). The aggregator receives the conversation plus all surviving analyses and produces the final answer (capped by `maxTokens`, default 4096). See the [config reference](/docs/config#mixture-of-agents) for every option.
+
+### Use a preset
+
+After configuring a preset, open the model picker (`Ctrl+X M`) and select `MoA <preset>`. You can also pin it in config with `"model": "moa/@moa/captain-test"` or set `moa.default_preset`.
+
+### Behavior
+
+- **Failure isolation** - A dead advisor never kills the turn; the aggregator works with the remaining analyses. The turn fails only when every advisor fails.
+- **Streaming** - The aggregator's output streams normally; usage for every advisor and the aggregator is reported on the stream's finish part.
+- **Traces** - Set `moa.save_traces: true` to write per-turn JSON traces (per-advisor and aggregator usage) to `data/moa-traces/`.
+
+---
+
 ## Loading models
 
 When OpenCode starts up, it checks for models in the following priority order:
