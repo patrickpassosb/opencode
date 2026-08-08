@@ -398,4 +398,42 @@ describe("provider HttpApi", () => {
     }),
     { ...projectOptions, init: writeProviderModelsMutationPlugin },
   )
+
+  it.instance(
+    "serves moa presets through the provider list API for the picker",
+    Effect.gen(function* () {
+      const directory = (yield* TestInstance).directory
+      const headers = { "x-opencode-directory": directory }
+      const providerResponse = yield* request("/provider", { headers })
+
+      expect(providerResponse.status).toBe(200)
+
+      const providerBody = yield* providerResponse.json
+      const moa = providerByID(providerBody, "all", "moa")
+      expect(moa).toBeDefined()
+      const models = isRecord(moa) && isRecord(moa.models) ? moa.models : {}
+      const preset = models["@moa/captain-test"]
+      expect(preset).toBeDefined()
+      expect(isRecord(preset) && preset.name).toBe("MoA captain-test")
+    }),
+    {
+      ...projectOptions,
+      config: {
+        ...projectOptions.config,
+        moa: {
+          default_preset: "captain-test",
+          presets: {
+            "captain-test": {
+              advisors: [
+                { provider: "custom", model: "ollama-cloud/glm-5.2", maxTokens: 600 },
+                { provider: "custom", model: "ollama-cloud/minimax-m3" },
+              ],
+              aggregator: { provider: "custom", model: "ollama-cloud/deepseek-v4-flash:0731", maxTokens: 4096 },
+              fanout: "user_turn" as const,
+            },
+          },
+        },
+      },
+    },
+  )
 })
