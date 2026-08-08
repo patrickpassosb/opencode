@@ -10,7 +10,8 @@ import { Hash } from "@opencode-ai/core/util/hash"
 import { Plugin } from "../plugin"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { type LanguageModelV3 } from "@ai-sdk/provider"
-import { attach } from "@/effect/run-service"
+import { attachWith } from "@/effect/run-service"
+import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { ConfigMoAV1 } from "@opencode-ai/core/v1/config/moa"
 import { Auth } from "../auth"
@@ -1912,13 +1913,18 @@ const layer = Layer.effect(
           })
         }
         const traceDir = path.join(Global.Path.data, "moa-traces")
+        const refs: { instance?: InstanceContext; workspace?: string } = {
+          instance: Context.getReferenceUnsafe(Fiber.getCurrent()!.context, InstanceRef),
+          workspace: Option.getOrUndefined(Context.getReferenceUnsafe(Fiber.getCurrent()!.context, WorkspaceRef)),
+        }
         const language = moaLanguageModel(preset, (providerID, modelID) =>
           Effect.runPromise(
-            attach(
+            attachWith(
               Effect.gen(function* () {
                 const sub = yield* getModel(ProviderV2.ID.make(providerID), ModelV2.ID.make(modelID))
                 return yield* getLanguage(sub)
               }),
+              refs,
             ),
           ),
         )
