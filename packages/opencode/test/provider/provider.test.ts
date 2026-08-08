@@ -2057,3 +2057,49 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
     expect(keyedCount).toBeGreaterThan(0)
   }).pipe(provideMultiInstance),
 )
+
+
+const moaConfig = {
+  moa: {
+    default_preset: "captain-test",
+    save_traces: true,
+    presets: {
+      "captain-test": {
+        advisors: [
+          { provider: "custom", model: "ollama-cloud/glm-5.2", maxTokens: 600 },
+          { provider: "custom", model: "ollama-cloud/minimax-m3" },
+        ],
+        aggregator: { provider: "custom", model: "ollama-cloud/deepseek-v4-flash:0731", maxTokens: 4096 },
+        maxTokens: 4096,
+        referenceMaxTokens: 600,
+        fanout: "user_turn" as const,
+      },
+    },
+  },
+}
+
+it.instance(
+  "synthesizes a virtual moa provider from configured presets",
+  Effect.gen(function* () {
+    const providers = yield* list
+    const moa = providers[ProviderV2.ID.make("moa")]
+    expect(moa).toBeDefined()
+    expect(moa!.name).toBe("Mixture of Agents")
+    const model = moa!.models["@moa/captain-test"]
+    expect(model).toBeDefined()
+    expect(model!.providerID).toEqual(ProviderV2.ID.make("moa"))
+    expect(model!.api.npm).toBe("@opencode-ai/moa")
+    expect(model!.options.moaPreset).toBeDefined()
+    expect(model!.options.moaPreset.advisors).toHaveLength(2)
+    expect(model!.options.moaPreset.aggregator.model).toBe("ollama-cloud/deepseek-v4-flash:0731")
+  }),
+  { config: moaConfig },
+)
+
+it.instance(
+  "omits the moa provider when no presets are configured",
+  Effect.gen(function* () {
+    const providers = yield* list
+    expect(providers[ProviderV2.ID.make("moa")]).toBeUndefined()
+  }),
+)
