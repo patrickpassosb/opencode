@@ -12,6 +12,7 @@ import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { type LanguageModelV3 } from "@ai-sdk/provider"
 import { attachWith } from "@/effect/run-service"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
+import type { InstanceContext } from "@/project/instance-context"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { ConfigMoAV1 } from "@opencode-ai/core/v1/config/moa"
 import { Auth } from "../auth"
@@ -21,7 +22,7 @@ import { iife } from "@/util/iife"
 import { Global } from "@opencode-ai/core/global"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Effect, Layer, Context, Schema, Types } from "effect"
+import { Effect, Fiber, Layer, Context, Option, Schema, Types } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { EffectPromise } from "@/effect/promise"
@@ -1915,7 +1916,7 @@ const layer = Layer.effect(
         const traceDir = path.join(Global.Path.data, "moa-traces")
         const refs: { instance?: InstanceContext; workspace?: string } = {
           instance: Context.getReferenceUnsafe(Fiber.getCurrent()!.context, InstanceRef),
-          workspace: Option.getOrUndefined(Context.getReferenceUnsafe(Fiber.getCurrent()!.context, WorkspaceRef)),
+          workspace: Context.getReferenceUnsafe(Fiber.getCurrent()!.context, WorkspaceRef),
         }
         const language = moaLanguageModel(preset, (providerID, modelID) =>
           Effect.runPromise(
